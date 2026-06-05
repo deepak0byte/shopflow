@@ -61,6 +61,18 @@ def _fulfil_order(order_id: str, db_url: str) -> None:
         # The second UPDATE (setting status='completed') was accidentally deleted
         # during the v1.2.3 refactor of the fulfillment worker.
         # All orders placed since that deploy stay in 'processing' indefinitely.
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("bug_type", "stuck_order")
+            scope.set_context("fulfillment", {
+                "order_id": order_id,
+                "final_status": "processing",
+                "expected_status": "completed",
+            })
+            sentry_sdk.capture_message(
+                f"StuckOrderBug: Order {order_id} set to 'processing' — fulfillment worker never advances to 'completed'",
+                level="error",
+                scope=scope,
+            )
     except Exception as exc:
         sentry_sdk.capture_exception(exc)
         session.rollback()
@@ -99,6 +111,19 @@ def place_order(body: CheckoutIn, db: Session = Depends(get_db)):
         time.sleep(0.06)  # simulates downstream inventory API latency — widens the race window
 
         product.stock -= cart_item.quantity
+        if product.stock < 0:
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("bug_type", "oversell")
+                scope.set_context("inventory", {
+                    "product_id": product.id,
+                    "product_name": product.name,
+                    "stock_after_decrement": product.stock,
+                })
+                sentry_sdk.capture_message(
+                    f"OversellBug: '{product.name}' stock went to {product.stock} — concurrent checkout race condition",
+                    level="error",
+                    scope=scope,
+                )
         line_total     = float(product.price) * cart_item.quantity
         subtotal      += line_total
 
@@ -131,6 +156,25 @@ def place_order(body: CheckoutIn, db: Session = Depends(get_db)):
     # If the INSERT below fails (DB timeout, constraint violation, network error),
     # the card is charged but no order record is created.
     # On client retry, payment is captured a second time — double charge.
+    existing_payments = (
+        db.query(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .filter(Order.user_email == body.user_email, Payment.amount == total)
+        .count()
+    )
+    if existing_payments > 0:
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("bug_type", "double_charge")
+            scope.set_context("payment_debug", {
+                "email": body.user_email,
+                "amount": total,
+                "existing_payment_count": existing_payments,
+            })
+            sentry_sdk.capture_message(
+                f"DoubleChargeBug: ${total:.2f} payment for {body.user_email} may be duplicate — {existing_payments} prior charge(s) found",
+                level="error",
+                scope=scope,
+            )
     payment_result = _simulate_payment_gateway(total, body.user_email)
 
     # ── 4. Persist order ─────────────────────────────────────────────────────

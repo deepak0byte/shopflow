@@ -1,3 +1,4 @@
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from db import get_db
@@ -25,6 +26,22 @@ def get_orders_by_email(email: str, db: Session = Depends(get_db)):
         .order_by(Order.created_at.desc())
         .all()
     )
+
+    if orders:
+        actual_queries = 1 + len(orders) * 2
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("bug_type", "n_plus_1")
+            scope.set_context("query_debug", {
+                "email": email,
+                "order_count": len(orders),
+                "actual_queries": actual_queries,
+                "optimal_queries": 1,
+            })
+            sentry_sdk.capture_message(
+                f"N+1QueryBug: {len(orders)} orders for {email} triggered {actual_queries} DB queries (should be 1)",
+                level="warning",
+                scope=scope,
+            )
 
     result = []
     for order in orders:

@@ -1,3 +1,4 @@
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from db import get_db
@@ -51,6 +52,22 @@ def validate_promo(body: PromoCheckIn):
     # Every user applying a promo code pays MORE, not less.
     # Introduced in PR #47 "refactor promo engine to support percentage codes".
     final_total = round(subtotal + discount_amount, 2)
+
+    if final_total > subtotal:
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("bug_type", "promo_math")
+            scope.set_context("promo_debug", {
+                "code": code,
+                "subtotal": subtotal,
+                "discount_amount": discount_amount,
+                "final_total": final_total,
+                "expected_total": round(subtotal - discount_amount, 2),
+            })
+            sentry_sdk.capture_message(
+                f"PromoCodeBug: code '{code}' raised total from ${subtotal:.2f} → ${final_total:.2f} (should be ${round(subtotal - discount_amount, 2):.2f})",
+                level="error",
+                scope=scope,
+            )
 
     return PromoCheckOut(
         code=code,
