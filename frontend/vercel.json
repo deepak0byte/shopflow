@@ -1,0 +1,10 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "@shopflow-api-url",
+    "NEXT_PUBLIC_SENTRY_DSN": "@shopflow-sentry-dsn"
+  }
+}
