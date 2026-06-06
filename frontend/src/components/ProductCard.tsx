@@ -1,5 +1,6 @@
 "use client";
 import Image from "next/image";
+import Link from "next/link";
 import { useCartStore } from "@/lib/store";
 import type { Product } from "@/lib/api";
 import { useState } from "react";
@@ -58,7 +59,9 @@ export function ProductCard({ product }: { product: Product }) {
             {product.category}
           </p>
         )}
-        <h3 className="font-bold text-gray-900 mb-1 leading-snug">{product.name}</h3>
+        <Link href={`/products/${product.slug}`} className="hover:text-brand transition-colors">
+          <h3 className="font-bold text-gray-900 mb-1 leading-snug">{product.name}</h3>
+        </Link>
         {product.description && (
           <p className="text-sm text-gray-500 mb-3 line-clamp-2 flex-1">{product.description}</p>
         )}

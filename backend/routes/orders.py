@@ -55,6 +55,7 @@ def get_orders_by_email(email: str, db: Session = Depends(get_db)):
             "total":           float(order.total),
             "promo_code":      order.promo_code,
             "created_at":      order.created_at,
+            "shipping_city":   order.shipping_address.get("city", ""),
         }
 
         # 🐛 BUG N+1 — separate query per order for items

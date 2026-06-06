@@ -208,7 +208,7 @@ def place_order(body: CheckoutIn, db: Session = Depends(get_db)):
         currency="USD",
         status=payment_result["status"],
         payment_method="card",
-        processor_ref=payment_result["processor_ref"],
+        processor_ref=payment_result["transaction_id"],
     ))
 
     db.commit()

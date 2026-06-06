@@ -25,6 +25,26 @@ export type Product = {
   sku: string | null;
 };
 
+export type ProductFilters = {
+  category?: string;
+  sort_by?: string;
+  search?: string;
+  price_min?: number;
+  price_max?: number;
+  in_stock?: boolean;
+};
+
+export type ProductStats = {
+  total_products: number;
+  in_stock: number;
+  out_of_stock: number;
+  on_sale: number;
+  avg_price: number;
+  min_price: number;
+  max_price: number;
+  by_category: Record<string, number>;
+};
+
 export type CartItemIn = { product_id: number; quantity: number };
 
 export type ShippingAddress = {
@@ -37,9 +57,9 @@ export type ShippingAddress = {
 };
 
 export type CheckoutIn = {
-  user_email:       string;
-  items:            CartItemIn[];
-  promo_code?:      string;
+  user_email:        string;
+  items:             CartItemIn[];
+  promo_code?:       string;
   shipping_address?: ShippingAddress;
 };
 
@@ -90,15 +110,31 @@ export type Order = {
 };
 
 export const api = {
-  products:     ()               => request<Product[]>("/products"),
+  products: (filters?: ProductFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.category)  qs.set("category",  filters.category);
+    if (filters?.sort_by)   qs.set("sort_by",   filters.sort_by);
+    if (filters?.search)    qs.set("search",    filters.search);
+    if (filters?.price_min != null) qs.set("price_min", String(filters.price_min));
+    if (filters?.price_max != null) qs.set("price_max", String(filters.price_max));
+    if (filters?.in_stock)  qs.set("in_stock",  "true");
+    const q = qs.toString();
+    return request<Product[]>(q ? `/products?${q}` : "/products");
+  },
+
   product:      (slug: string)   => request<Product>(`/products/${slug}`),
-  validatePromo:(code: string, subtotal: number) =>
+  categories:   ()               => request<string[]>("/products/categories"),
+  productStats: ()               => request<ProductStats>("/products/stats"),
+
+  validatePromo: (code: string, subtotal: number) =>
     request<PromoResult>("/products/promo/validate", {
       method: "POST",
       body: JSON.stringify({ code, subtotal }),
     }),
+
   checkout: (body: CheckoutIn) =>
     request<CheckoutOut>("/checkout", { method: "POST", body: JSON.stringify(body) }),
+
   orders: (email: string) => request<Order[]>(`/orders/${encodeURIComponent(email)}`),
   order:  (id: string)    => request<Order>(`/orders/detail/${id}`),
 };

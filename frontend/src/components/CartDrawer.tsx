@@ -55,6 +55,9 @@ export function CartDrawer({ open, onClose }: Props) {
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{product.name}</p>
                     <p className="text-gray-500 text-sm">${product.price.toFixed(2)}</p>
+                    {product.compare_at_price !== undefined && (
+                      <p className="text-xs text-gray-400 line-through">Was ${product.compare_at_price!.toFixed(2)}</p>
+                    )}
                     <div className="flex items-center gap-2 mt-1">
                       <button
                         onClick={() => updateQty(product.id, quantity - 1)}

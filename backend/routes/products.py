@@ -1,5 +1,6 @@
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from db import get_db
 from models import Product
@@ -16,16 +17,101 @@ PROMO_CODES: dict[str, dict] = {
 
 
 @router.get("", response_model=list[ProductOut])
-def list_products(category: str | None = None, db: Session = Depends(get_db)):
+def list_products(
+    category: str | None = None,
+    sort_by: str | None = None,
+    search: str | None = None,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    in_stock: bool | None = None,
+    db: Session = Depends(get_db),
+):
     q = db.query(Product).filter(Product.is_active == True)  # noqa: E712
+
     if category:
         q = q.filter(Product.category == category)
-    return q.order_by(Product.id).all()
+    if search:
+        term = f"%{search}%"
+        q = q.filter(Product.name.ilike(term) | Product.description.ilike(term))
+    if in_stock:
+        q = q.filter(Product.stock > 0)
+
+    if sort_by == "price_asc":
+        q = q.order_by(Product.price.asc())
+    elif sort_by == "price_desc":
+        q = q.order_by(Product.price.desc())
+    elif sort_by == "name":
+        q = q.order_by(Product.name.asc())
+    elif sort_by == "newest":
+        q = q.order_by(Product.id.desc())
+    else:
+        q = q.order_by(Product.id.asc())
+
+    products = q.all()
+
+    # Apply price range filter in-memory after DB fetch
+    if price_min is not None:
+        products = [p for p in products if p.price >= price_min]
+    if price_max is not None:
+        products = [p for p in products if p.price <= price_max]
+
+    # Sort by discount percentage (best deals first)
+    if sort_by == "discount":
+        products.sort(
+            key=lambda p: (p.compare_at_price - p.price) / p.compare_at_price,
+            reverse=True,
+        )
+
+    return products
+
+
+@router.get("/categories", response_model=list[str])
+def list_categories(db: Session = Depends(get_db)):
+    rows = (
+        db.query(Product.category)
+        .filter(Product.is_active == True, Product.category.isnot(None))  # noqa: E712
+        .distinct()
+        .order_by(Product.category)
+        .all()
+    )
+    return [r.category for r in rows]
+
+
+@router.get("/stats")
+def product_stats(db: Session = Depends(get_db)):
+    base = db.query(Product).filter(Product.is_active == True)  # noqa: E712
+    total     = base.count()
+    in_stock  = base.filter(Product.stock > 0).count()
+    avg_price = db.query(func.avg(Product.price)).filter(Product.is_active == True).scalar()  # noqa: E712
+    min_price = db.query(func.min(Product.price)).filter(Product.is_active == True).scalar()  # noqa: E712
+    max_price = db.query(func.max(Product.price)).filter(Product.is_active == True).scalar()  # noqa: E712
+
+    by_category = (
+        db.query(Product.category, func.count(Product.id).label("count"))
+        .filter(Product.is_active == True)  # noqa: E712
+        .group_by(Product.category)
+        .all()
+    )
+
+    on_sale = base.filter(Product.compare_at_price.isnot(None)).count()
+
+    return {
+        "total_products":  total,
+        "in_stock":        in_stock,
+        "out_of_stock":    total - in_stock,
+        "on_sale":         on_sale,
+        "avg_price":       round(float(avg_price or 0), 2),
+        "min_price":       round(float(min_price or 0), 2),
+        "max_price":       round(float(max_price or 0), 2),
+        "by_category":     {row.category or "Uncategorized": row.count for row in by_category},
+    }
 
 
 @router.get("/{slug}", response_model=ProductOut)
 def get_product(slug: str, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.slug == slug, Product.is_active == True).first()  # noqa: E712
+    product = db.query(Product).filter(
+        Product.slug == slug, Product.is_active == True  # noqa: E712
+    ).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
@@ -33,10 +119,7 @@ def get_product(slug: str, db: Session = Depends(get_db)):
 
 @router.post("/promo/validate", response_model=PromoCheckOut)
 def validate_promo(body: PromoCheckIn):
-    """
-    Validates a promo code and returns the discounted total.
-    """
-    code = body.code.upper().strip()
+    code  = body.code.upper().strip()
     promo = PROMO_CODES.get(code)
     if not promo:
         raise HTTPException(status_code=400, detail="Invalid or expired promo code")
@@ -48,9 +131,9 @@ def validate_promo(body: PromoCheckIn):
     else:
         discount_amount = round(subtotal * promo["value"] / 100, 2)
 
+    savings_pct = round((discount_amount / body.subtotal) * 100)
+
     # 🐛 BUG: final_total adds discount instead of subtracting it.
-    # Every user applying a promo code pays MORE, not less.
-    # Introduced in PR #47 "refactor promo engine to support percentage codes".
     final_total = round(subtotal + discount_amount, 2)
 
     if final_total > subtotal:
