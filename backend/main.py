@@ -1,7 +1,7 @@
 import os
 import sentry_sdk
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -67,7 +67,10 @@ def health():
 
 @app.get("/sentry-debug")
 async def trigger_error():
-    division_by_zero = 1 / 0
+    if os.getenv("ENV", "development").lower() != "development":
+        raise HTTPException(status_code=404, detail="Not found")
+    sentry_sdk.capture_message("Sentry debug endpoint invoked", level="info")
+    return {"status": "ok", "message": "Debug event sent to Sentry without crashing"}
 
 
 if __name__ == "__main__":
